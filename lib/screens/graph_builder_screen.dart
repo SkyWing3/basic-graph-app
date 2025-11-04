@@ -264,6 +264,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                       onCompleteConnect: _completeConnect,
                       onDeleteEdge: _deleteEdge,
                       onEditEdge: _editEdge,
+                      onUpdateEdgeControl: _updateEdgeControl,
                     ),
                   ),
                 ),
@@ -310,6 +311,21 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     });
 
     _showSnackBar('Peso actualizado');
+  }
+
+  void _updateEdgeControl(String edgeId, Offset control) {
+    final index = _edges.indexWhere((edge) => edge.id == edgeId);
+    if (index == -1) return;
+
+    final updatedEdges = List<GraphEdge>.from(_edges);
+    updatedEdges[index] = updatedEdges[index].copyWith(
+      controlX: control.dx,
+      controlY: control.dy,
+    );
+
+    setState(() {
+      _edges = updatedEdges;
+    });
   }
 
 }

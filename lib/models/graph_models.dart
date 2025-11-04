@@ -39,23 +39,31 @@ class GraphEdge {
     required this.from,
     required this.to,
     required this.weight,
+    this.controlX,
+    this.controlY,
   });
 
   final String id;
   final String from;
   final String to;
   final double weight;
+  final double? controlX;
+  final double? controlY;
 
   GraphEdge copyWith({
     String? from,
     String? to,
     double? weight,
+    double? controlX,
+    double? controlY,
   }) {
     return GraphEdge(
       id: id,
       from: from ?? this.from,
       to: to ?? this.to,
       weight: weight ?? this.weight,
+      controlX: controlX ?? this.controlX,
+      controlY: controlY ?? this.controlY,
     );
   }
 }

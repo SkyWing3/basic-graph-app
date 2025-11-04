@@ -19,6 +19,7 @@ class GraphCanvas extends StatefulWidget {
     required this.onCompleteConnect,
     required this.onDeleteEdge,
     required this.onEditEdge,
+    required this.onUpdateEdgeControl,
   });
 
   final List<GraphNode> nodes;
@@ -36,6 +37,7 @@ class GraphCanvas extends StatefulWidget {
   final void Function(String from, String to) onCompleteConnect;
   final void Function(String id) onDeleteEdge;
   final void Function(GraphEdge edge) onEditEdge;
+  final void Function(String edgeId, Offset controlPoint) onUpdateEdgeControl;
 
   @override
   State<GraphCanvas> createState() => _GraphCanvasState();
@@ -46,6 +48,10 @@ class _GraphCanvasState extends State<GraphCanvas> {
   static const double _selectionRadius = 36;
 
   Offset? _pointerPosition;
+  String? _pendingEdgeTapId;
+  String? _draggingEdgeId;
+  Offset? _edgeDragStart;
+  bool _edgeDragMoved = false;
 
   GraphNode? _nodeById(String id) {
     for (final node in widget.nodes) {
@@ -64,6 +70,12 @@ class _GraphCanvasState extends State<GraphCanvas> {
         widget.selectedTool != Tool.connect &&
         _pointerPosition != null) {
       _pointerPosition = null;
+    }
+    if (widget.selectedTool != Tool.select && _draggingEdgeId != null) {
+      _draggingEdgeId = null;
+      _pendingEdgeTapId = null;
+      _edgeDragStart = null;
+      _edgeDragMoved = false;
     }
   }
 
@@ -99,6 +111,9 @@ class _GraphCanvasState extends State<GraphCanvas> {
 
   void _handleBackgroundTapDown(TapDownDetails details, Size size) {
     final position = details.localPosition;
+    if (widget.selectedTool != Tool.select) {
+      _pendingEdgeTapId = null;
+    }
 
     if (widget.selectedTool == Tool.delete) {
       final edge = _edgeHitTest(position);
@@ -115,10 +130,12 @@ class _GraphCanvasState extends State<GraphCanvas> {
       case Tool.select:
         final edge = _edgeHitTest(position);
         if (edge != null) {
+          _pendingEdgeTapId = edge.id;
           widget.onSelectNode(null);
-          widget.onEditEdge(edge);
+          _draggingEdgeId = null;
           return;
         }
+        _pendingEdgeTapId = null;
         widget.onSelectNode(null);
         break;
       case Tool.connect:
@@ -134,6 +151,104 @@ class _GraphCanvasState extends State<GraphCanvas> {
     }
   }
 
+  void _handlePanStart(DragStartDetails details, Size size) {
+    if (widget.selectedTool != Tool.select) {
+      return;
+    }
+    final edge = _edgeHitTest(details.localPosition);
+    if (edge != null) {
+      _draggingEdgeId = edge.id;
+      _edgeDragStart = _clampPointer(details.localPosition, size);
+      _edgeDragMoved = false;
+      _pendingEdgeTapId = edge.id;
+      widget.onSelectNode(null);
+    }
+  }
+
+  void _handlePanUpdate(DragUpdateDetails details, Size size) {
+    if (_draggingEdgeId == null || widget.selectedTool != Tool.select) {
+      return;
+    }
+
+    final position = _clampPointer(details.localPosition, size);
+
+    if (!_edgeDragMoved && _edgeDragStart != null) {
+      final delta = (position - _edgeDragStart!).distance;
+      if (delta > 8) {
+        _edgeDragMoved = true;
+      }
+    }
+
+    if (_edgeDragMoved) {
+      _pendingEdgeTapId = null;
+      widget.onUpdateEdgeControl(_draggingEdgeId!, position);
+    }
+  }
+
+  void _handleTapUp() {
+    if (_draggingEdgeId != null) {
+      return;
+    }
+    if (_pendingEdgeTapId != null && widget.selectedTool == Tool.select) {
+      final edge = widget.edges.firstWhere(
+        (e) => e.id == _pendingEdgeTapId,
+        orElse: () => const GraphEdge(
+          id: '',
+          from: '',
+          to: '',
+          weight: 0,
+        ),
+      );
+      if (edge.id.isNotEmpty) {
+        widget.onEditEdge(edge);
+      }
+    }
+
+    _pendingEdgeTapId = null;
+  }
+
+  void _handlePanEnd({required bool allowEdit}) {
+    if (_draggingEdgeId != null) {
+      final edgeId = _draggingEdgeId!;
+      final edge = widget.edges.firstWhere(
+        (e) => e.id == edgeId,
+        orElse: () => const GraphEdge(
+          id: '',
+          from: '',
+          to: '',
+          weight: 0,
+        ),
+      );
+
+      if (allowEdit &&
+          !_edgeDragMoved &&
+          widget.selectedTool == Tool.select &&
+          edge.id.isNotEmpty) {
+        widget.onEditEdge(edge);
+      }
+    } else if (allowEdit &&
+        _pendingEdgeTapId != null &&
+        widget.selectedTool == Tool.select) {
+      final edge = widget.edges.firstWhere(
+        (e) => e.id == _pendingEdgeTapId,
+        orElse: () => const GraphEdge(
+          id: '',
+          from: '',
+          to: '',
+          weight: 0,
+        ),
+      );
+      if (edge.id.isNotEmpty) {
+        widget.onEditEdge(edge);
+      }
+    }
+
+    _draggingEdgeId = null;
+    _edgeDragStart = null;
+    _edgeDragMoved = false;
+    _pendingEdgeTapId = null;
+  }
+
   GraphEdge? _edgeHitTest(Offset point) {
     const double threshold = 24;
 
@@ -145,18 +260,59 @@ class _GraphCanvasState extends State<GraphCanvas> {
         continue;
       }
 
-      final distance = _distanceToSegment(
-        point,
+      final points = _edgeSamplePoints(
         Offset(fromNode.x, fromNode.y),
         Offset(toNode.x, toNode.y),
+        edge,
       );
 
-      if (distance <= threshold) {
-        return edge;
+      for (var i = 0; i < points.length - 1; i++) {
+        final distance = _distanceToSegment(
+          point,
+          points[i],
+          points[i + 1],
+        );
+        if (distance <= threshold) {
+          return edge;
+        }
       }
     }
 
     return null;
+  }
+
+  List<Offset> _edgeSamplePoints(
+    Offset start,
+    Offset end,
+    GraphEdge edge,
+  ) {
+    final control = (edge.controlX != null && edge.controlY != null)
+        ? Offset(edge.controlX!, edge.controlY!)
+        : null;
+
+    if (control == null) {
+      return [start, end];
+    }
+
+    const segments = 32;
+    final points = <Offset>[];
+    for (var i = 0; i <= segments; i++) {
+      final t = i / segments;
+      points.add(_quadraticPoint(start, control, end, t));
+    }
+    return points;
+  }
+
+  Offset _quadraticPoint(Offset p0, Offset p1, Offset p2, double t) {
+    final oneMinusT = 1 - t;
+    return Offset(
+      oneMinusT * oneMinusT * p0.dx +
+          2 * oneMinusT * t * p1.dx +
+          t * t * p2.dx,
+      oneMinusT * oneMinusT * p0.dy +
+          2 * oneMinusT * t * p1.dy +
+          t * t * p2.dy,
+    );
   }
 
   double _distanceToSegment(Offset p, Offset v, Offset w) {
@@ -346,6 +502,11 @@ class _GraphCanvasState extends State<GraphCanvas> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapDown: (details) => _handleBackgroundTapDown(details, size),
+            onTapUp: (_) => _handleTapUp(),
+            onPanStart: (details) => _handlePanStart(details, size),
+            onPanUpdate: (details) => _handlePanUpdate(details, size),
+            onPanEnd: (_) => _handlePanEnd(allowEdit: true),
+            onPanCancel: () => _handlePanEnd(allowEdit: false),
             child: SizedBox.expand(
               child: Stack(
                 children: [
@@ -452,13 +613,30 @@ class _GraphPainter extends CustomPainter {
 
       final start = Offset(fromNode.x, fromNode.y);
       final end = Offset(toNode.x, toNode.y);
+      final control = (edge.controlX != null && edge.controlY != null)
+          ? Offset(edge.controlX!, edge.controlY!)
+          : null;
 
-      canvas.drawLine(start, end, edgePaint);
+      Offset midPoint;
 
-      final midPoint = Offset(
-        (start.dx + end.dx) / 2,
-        (start.dy + end.dy) / 2,
-      );
+      if (control == null) {
+        canvas.drawLine(start, end, edgePaint);
+        midPoint = Offset(
+          (start.dx + end.dx) / 2,
+          (start.dy + end.dy) / 2,
+        );
+      } else {
+        final path = Path()
+          ..moveTo(start.dx, start.dy)
+          ..quadraticBezierTo(
+            control.dx,
+            control.dy,
+            end.dx,
+            end.dy,
+          );
+        canvas.drawPath(path, edgePaint);
+        midPoint = _quadraticPoint(start, control, end, 0.5);
+      }
 
       final label = _formatWeight(edge.weight);
       final textPainter = TextPainter(
@@ -581,5 +759,17 @@ class _GraphPainter extends CustomPainter {
         oldDelegate.selectedTool != selectedTool ||
         oldDelegate.connectingFrom != connectingFrom ||
         oldDelegate.pointerPosition != pointerPosition;
+  }
+
+  Offset _quadraticPoint(Offset p0, Offset p1, Offset p2, double t) {
+    final oneMinusT = 1 - t;
+    return Offset(
+      oneMinusT * oneMinusT * p0.dx +
+          2 * oneMinusT * t * p1.dx +
+          t * t * p2.dx,
+      oneMinusT * oneMinusT * p0.dy +
+          2 * oneMinusT * t * p1.dy +
+          t * t * p2.dy,
+    );
   }
 }
