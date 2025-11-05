@@ -596,26 +596,48 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       return 'Conecta los nodos para construir un ciclo.';
     }
 
-    final nodeIds = _nodes.map((node) => node.id).toList(growable: false);
-    final edgeLookup = <String, Set<String>>{};
+    final adjacency = <String, Set<String>>{
+      for (final node in _nodes) node.id: <String>{},
+    };
 
     for (final edge in _edges) {
-      edgeLookup.putIfAbsent(edge.from, () => <String>{}).add(edge.to);
-      edgeLookup.putIfAbsent(edge.to, () => <String>{}).add(edge.from);
+      adjacency[edge.from]!.add(edge.to);
+      adjacency[edge.to]!.add(edge.from);
     }
 
-    for (var i = 0; i < nodeIds.length; i++) {
-      for (var j = i + 1; j < nodeIds.length; j++) {
-        final from = nodeIds[i];
-        final to = nodeIds[j];
-        final fromConnections = edgeLookup[from] ?? const {};
-        if (!fromConnections.contains(to)) {
-          final fromLabel =
-              _nodes.firstWhere((node) => node.id == from).label;
-          final toLabel = _nodes.firstWhere((node) => node.id == to).label;
-          return 'Falta la conexión entre $fromLabel y $toLabel.';
+    GraphNode? insufficientNode;
+    for (final node in _nodes) {
+      final degree = adjacency[node.id]?.length ?? 0;
+      if (degree < 2) {
+        insufficientNode = node;
+        break;
+      }
+    }
+
+    if (insufficientNode != null) {
+      return 'El nodo ${insufficientNode.label} necesita al menos dos conexiones para formar un ciclo.';
+    }
+
+    final visited = <String>{};
+    final stack = <String>[_nodes.first.id];
+
+    while (stack.isNotEmpty) {
+      final current = stack.removeLast();
+      if (!visited.add(current)) {
+        continue;
+      }
+      for (final neighbor in adjacency[current] ?? const <String>{}) {
+        if (!visited.contains(neighbor)) {
+          stack.add(neighbor);
         }
       }
+    }
+
+    if (visited.length != _nodes.length) {
+      final unreachable = _nodes.firstWhere(
+        (node) => !visited.contains(node.id),
+      );
+      return 'El grafo debe ser conexo. No se puede llegar al nodo ${unreachable.label} desde los demás.';
     }
 
     return null;
