@@ -32,6 +32,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
   int _currentGenerationIndex = 0;
   bool _isSolving = false;
   bool _isPlaying = false;
+  bool _isViewingSolution = false;
   Timer? _playbackTimer;
 
   static const Duration _animationStep = Duration(milliseconds: 1200);
@@ -54,7 +55,17 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     _highlightedRoute = null;
     _currentGenerationIndex = 0;
     _isPlaying = false;
+    _isViewingSolution = false;
     _highlightVersion++;
+  }
+
+  void _returnToEditingMode() {
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+    setState(() {
+      _clearSolutionInternal();
+      _isSolving = false;
+    });
   }
 
   String _formatDistance(double value) {
@@ -354,19 +365,26 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   ),
                 ),
               ),
-              if (_geneticTimeline.isNotEmpty) _buildSolutionPanel(),
-              GraphToolbar(
-                selectedTool: _selectedTool,
-                onSelectTool: (tool) {
-                  setState(() {
-                    _selectedTool = tool;
-                    if (tool != Tool.connect) {
-                      _connectingFrom = null;
-                    }
-                  });
-                },
-                onClear: _clearGraph,
-                hasNodes: _nodes.isNotEmpty,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                child: _isViewingSolution
+                    ? _buildSolutionPanel()
+                    : GraphToolbar(
+                        key: const ValueKey('graph_toolbar'),
+                        selectedTool: _selectedTool,
+                        onSelectTool: (tool) {
+                          setState(() {
+                            _selectedTool = tool;
+                            if (tool != Tool.connect) {
+                              _connectingFrom = null;
+                            }
+                          });
+                        },
+                        onClear: _clearGraph,
+                        hasNodes: _nodes.isNotEmpty,
+                      ),
               ),
             ],
           ),
@@ -425,8 +443,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     final adjacency = _buildAdjacencyMap();
 
     setState(() {
-      _isSolving = true;
       _clearSolutionInternal();
+      _isSolving = true;
+      _isViewingSolution = true;
     });
 
     try {
@@ -447,6 +466,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       if (generations.isEmpty) {
         setState(() {
           _isSolving = false;
+          _isViewingSolution = false;
         });
         _showSnackBar(
           'No se pudo generar una solución. Ajusta el grafo e inténtalo de nuevo.',
@@ -461,6 +481,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
         _highlightedRoute = List<String>.from(generations.first.route);
         _highlightVersion++;
         _isSolving = false;
+        _isViewingSolution = true;
       });
 
       if (_geneticTimeline.length > 1) {
@@ -472,6 +493,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       }
       setState(() {
         _isSolving = false;
+        _isViewingSolution = false;
       });
       _showSnackBar(
         'Ocurrió un problema al ejecutar la solución: $error',
@@ -613,21 +635,27 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
   }
 
   Widget _buildSolutionPanel() {
-    if (_geneticTimeline.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
     final theme = Theme.of(context);
-    final current = _geneticTimeline[_currentGenerationIndex];
-    final totalGenerations = _geneticTimeline.last.generation;
-    final progress = totalGenerations == 0
-        ? 1.0
-        : (current.generation / totalGenerations).clamp(0.0, 1.0);
+    final hasSolution = _geneticTimeline.isNotEmpty;
+    final GeneticTspGeneration? current =
+        hasSolution ? _geneticTimeline[_currentGenerationIndex] : null;
+    final int totalGenerations = hasSolution ? _geneticTimeline.last.generation : 0;
+    final double? progressValue = hasSolution
+        ? (totalGenerations == 0
+            ? 1.0
+            : (current!.generation / totalGenerations).clamp(0.0, 1.0))
+        : null;
 
-    final hasPrevious = _currentGenerationIndex > 0;
-    final hasNext = _currentGenerationIndex < _geneticTimeline.length - 1;
+    final hasPrevious = hasSolution && _currentGenerationIndex > 0;
+    final hasNext =
+        hasSolution && _currentGenerationIndex < _geneticTimeline.length - 1;
+
+    final String subtitle = hasSolution
+        ? 'Generación ${current!.generation} de $totalGenerations'
+        : 'Buscando la mejor ruta...';
 
     return Container(
+      key: const ValueKey('solution_panel'),
       margin: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
@@ -660,7 +688,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Generación ${current.generation} de $totalGenerations',
+                      subtitle,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: const Color(0xFF64748B),
                       ),
@@ -668,37 +696,59 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   ],
                 ),
               ),
-              Row(
+              Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  IconButton(
-                    tooltip: 'Generación anterior',
-                    onPressed: hasPrevious
-                        ? () => _goToStep(_currentGenerationIndex - 1)
-                        : null,
-                    icon: const Icon(Icons.skip_previous_rounded),
-                    color: const Color(0xFF0F172A),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: _isPlaying ? 'Pausar animación' : 'Reproducir animación',
-                    onPressed: _isPlaying ? _pauseAutoPlay : _startAutoPlay,
-                    icon: Icon(
-                      _isPlaying
-                          ? Icons.pause_circle_filled_rounded
-                          : Icons.play_circle_fill_rounded,
+                  OutlinedButton.icon(
+                    onPressed: _returnToEditingMode,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
                     ),
-                    iconSize: 34,
-                    color: const Color(0xFF22C55E),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Modo edición'),
                   ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Siguiente generación',
-                    onPressed:
-                        hasNext ? () => _goToStep(_currentGenerationIndex + 1) : null,
-                    icon: const Icon(Icons.skip_next_rounded),
-                    color: const Color(0xFF0F172A),
-                  ),
+                  if (hasSolution) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Generación anterior',
+                          onPressed: hasPrevious
+                              ? () => _goToStep(_currentGenerationIndex - 1)
+                              : null,
+                          icon: const Icon(Icons.skip_previous_rounded),
+                          color: const Color(0xFF0F172A),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip:
+                              _isPlaying ? 'Pausar animación' : 'Reproducir animación',
+                          onPressed: _isPlaying ? _pauseAutoPlay : _startAutoPlay,
+                          icon: Icon(
+                            _isPlaying
+                                ? Icons.pause_circle_filled_rounded
+                                : Icons.play_circle_fill_rounded,
+                          ),
+                          iconSize: 34,
+                          color: const Color(0xFF22C55E),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Siguiente generación',
+                          onPressed: hasNext
+                              ? () => _goToStep(_currentGenerationIndex + 1)
+                              : null,
+                          icon: const Icon(Icons.skip_next_rounded),
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -707,7 +757,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
           ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: LinearProgressIndicator(
-              value: progress,
+              value: progressValue,
               minHeight: 6,
               backgroundColor: const Color(0xFFE2E8F0),
               valueColor: const AlwaysStoppedAnimation<Color>(
@@ -715,24 +765,51 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricChip(
-                  label: 'Mejor distancia',
-                  value: '${_formatDistance(current.bestDistance)}',
+          if (!hasSolution) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF22C55E)),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricChip(
-                  label: 'Promedio',
-                  value: _formatDistance(current.averageDistance),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _isSolving
+                        ? 'Evolucionando posibles rutas...'
+                        : 'Listo para mostrar la solución más reciente.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF475569),
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _MetricChip(
+                    label: 'Mejor distancia',
+                    value: _formatDistance(current!.bestDistance),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _MetricChip(
+                    label: 'Promedio',
+                    value: _formatDistance(current!.averageDistance),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
