@@ -76,8 +76,13 @@ class GeneticTspSolver {
 
     final startNode = nodes.first;
     final remainingNodes = nodes.sublist(1);
-    final population = _initialPopulation(remainingNodes);
+    final population = _initialPopulation(remainingNodes, startNode);
     var evaluations = _evaluatePopulation(population, startNode);
+    if (evaluations.isEmpty) {
+      throw StateError(
+        'Las conexiones actuales no permiten construir un ciclo que visite todos los nodos.',
+      );
+    }
 
     final generationsLog = <GeneticTspGeneration>[
       _logGeneration(0, evaluations, startNode),
@@ -86,24 +91,52 @@ class GeneticTspSolver {
     var currentPopulation = population;
 
     for (var generation = 1; generation <= generations; generation++) {
-      currentPopulation = _nextGeneration(evaluations);
+      currentPopulation = _nextGeneration(evaluations, startNode);
       evaluations = _evaluatePopulation(currentPopulation, startNode);
+      if (evaluations.isEmpty) {
+        throw StateError(
+          'Las conexiones actuales no permiten construir un ciclo que visite todos los nodos.',
+        );
+      }
       generationsLog.add(_logGeneration(generation, evaluations, startNode));
     }
 
     return generationsLog;
   }
 
-  List<List<String>> _initialPopulation(List<String> remainingNodes) {
+  List<List<String>> _initialPopulation(
+    List<String> remainingNodes,
+    String startNode,
+  ) {
     if (remainingNodes.isEmpty) {
       return List.generate(populationSize, (_) => <String>[]);
     }
 
     final population = <List<String>>[];
-    for (var i = 0; i < populationSize; i++) {
+    final attemptsLimit = max(populationSize * 20, 100);
+    var attempts = 0;
+
+    while (population.length < populationSize && attempts < attemptsLimit) {
+      attempts++;
       final genome = List<String>.from(remainingNodes);
       genome.shuffle(_random);
-      population.add(genome);
+      if (_isValidGenome(startNode, genome)) {
+        population.add(genome);
+      }
+    }
+
+    if (population.isEmpty) {
+      throw StateError(
+        'No existe un ciclo válido usando únicamente las conexiones dibujadas.',
+      );
+    }
+
+    while (population.length < populationSize) {
+      population.add(
+        List<String>.from(
+          population[_random.nextInt(population.length)],
+        ),
+      );
     }
     return population;
   }
@@ -115,6 +148,9 @@ class GeneticTspSolver {
     final evaluations = <_ChromosomeEvaluation>[];
     for (final genome in population) {
       final distance = _routeDistance(startNode, genome);
+      if (!distance.isFinite) {
+        continue;
+      }
       evaluations.add(
         _ChromosomeEvaluation(genome: genome, distance: distance),
       );
@@ -124,7 +160,14 @@ class GeneticTspSolver {
     return evaluations;
   }
 
-  List<List<String>> _nextGeneration(List<_ChromosomeEvaluation> evaluations) {
+  List<List<String>> _nextGeneration(
+    List<_ChromosomeEvaluation> evaluations,
+    String startNode,
+  ) {
+    if (evaluations.isEmpty) {
+      return const <List<String>>[];
+    }
+
     final nextPopulation = <List<String>>[];
 
     for (var i = 0; i < elitismCount && i < evaluations.length; i++) {
@@ -137,6 +180,11 @@ class GeneticTspSolver {
       var child = _orderedCrossover(parent1, parent2);
       if (_random.nextDouble() < mutationRate && child.length >= 2) {
         child = _swapMutation(child);
+      }
+      if (!_isValidGenome(startNode, child)) {
+        child = List<String>.from(
+          evaluations[_random.nextInt(evaluations.length)].genome,
+        );
       }
       nextPopulation.add(child);
     }
@@ -222,6 +270,19 @@ class GeneticTspSolver {
 
   List<String> _buildRoute(String startNode, List<String> genome) {
     return [startNode, ...genome, startNode];
+  }
+
+  bool _isValidGenome(String startNode, List<String> genome) {
+    final route = _buildRoute(startNode, genome);
+    for (var i = 0; i < route.length - 1; i++) {
+      final from = route[i];
+      final to = route[i + 1];
+      final weight = adjacency[from]?[to];
+      if (weight == null) {
+        return false;
+      }
+    }
+    return true;
   }
 
   double _routeDistance(String startNode, List<String> genome) {
