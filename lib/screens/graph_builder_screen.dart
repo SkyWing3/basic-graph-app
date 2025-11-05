@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import '../models/graph_models.dart';
+import '../models/genetic_tsp_solver.dart';
 import '../widgets/graph_canvas.dart';
 import '../widgets/graph_toolbar.dart';
 import '../widgets/node_edit_dialog.dart';
@@ -24,6 +26,15 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
   Tool _selectedTool = Tool.add;
   String? _selectedNodeId;
   String? _connectingFrom;
+  List<GeneticTspGeneration> _geneticTimeline = const [];
+  List<String>? _highlightedRoute;
+  int _highlightVersion = 0;
+  int _currentGenerationIndex = 0;
+  bool _isSolving = false;
+  bool _isPlaying = false;
+  Timer? _playbackTimer;
+
+  static const Duration _animationStep = Duration(milliseconds: 1200);
   void _showSnackBar(String message, {bool error = false}) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -34,6 +45,21 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  void _clearSolutionInternal() {
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+    _geneticTimeline = const [];
+    _highlightedRoute = null;
+    _currentGenerationIndex = 0;
+    _isPlaying = false;
+    _highlightVersion++;
+  }
+
+  String _formatDistance(double value) {
+    final formatted = value.toStringAsFixed(2);
+    return formatted.replaceFirst(RegExp(r'\.?0+$'), '');
   }
 
   void _addNode(Offset position) {
@@ -50,6 +76,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     setState(() {
       _nodes = updatedNodes;
       _selectedNodeId = newNode.id;
+      _clearSolutionInternal();
     });
 
     _showSnackBar('Nodo agregado');
@@ -86,6 +113,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       if (_connectingFrom == id) {
         _connectingFrom = null;
       }
+      _clearSolutionInternal();
     });
 
     _showSnackBar('Nodo eliminado');
@@ -97,6 +125,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
           _edges.where((edge) => edge.id != id).toList(growable: false);
       setState(() {
         _edges = updatedEdges;
+        _clearSolutionInternal();
       });
       _showSnackBar('Conexión eliminada');
     }
@@ -148,6 +177,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     setState(() {
       _edges = List<GraphEdge>.from(_edges)..add(newEdge);
       _connectingFrom = null;
+      _clearSolutionInternal();
     });
 
     _showSnackBar('Conexión creada');
@@ -183,15 +213,25 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       _edges = const [];
       _selectedNodeId = null;
       _connectingFrom = null;
+      _clearSolutionInternal();
     });
 
     _showSnackBar('Grafo limpiado');
   }
 
   @override
+  void dispose() {
+    _playbackTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final nodeCount = _nodes.length;
     final edgeCount = _edges.length;
+    final bool hasSolution = _geneticTimeline.isNotEmpty;
+    final GeneticTspGeneration? currentGeneration =
+        hasSolution ? _geneticTimeline[_currentGenerationIndex] : null;
 
     return Scaffold(
       body: Container(
@@ -220,26 +260,69 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   ],
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Graph Builder',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                color: const Color(0xFF0F172A),
-                                fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Graph Builder',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  color: const Color(0xFF0F172A),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$nodeCount nodos • $edgeCount conexiones',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: const Color(0xFF64748B),
+                                ),
+                          ),
+                          if (currentGeneration != null)
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              child: Text(
+                                'Mejor actual: ${_formatDistance(currentGeneration.bestDistance)}',
+                                key: ValueKey<int>(_highlightVersion),
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: const Color(0xFF22C55E),
+                                      fontWeight: FontWeight.w600,
+                                    ),
                               ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    SizedBox(
+                      height: 44,
+                      child: FilledButton.icon(
+                        onPressed: _isSolving ? null : _runGeneticSolver,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$nodeCount nodos • $edgeCount conexiones',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: const Color(0xFF64748B),
-                              ),
+                        icon: _isSolving
+                            ? SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Icon(Icons.alt_route_rounded),
+                        label: Text(
+                          _isSolving
+                              ? 'Resolviendo...'
+                              : hasSolution
+                                  ? 'Recalcular ruta'
+                                  : 'Resolver TSP',
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
@@ -255,6 +338,8 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                       selectedTool: _selectedTool,
                       selectedNodeId: _selectedNodeId,
                       connectingFrom: _connectingFrom,
+                      highlightedRoute: _highlightedRoute,
+                      highlightVersion: _highlightVersion,
                       onAddNode: _addNode,
                       onMoveNode: _moveNode,
                       onDeleteNode: _deleteNode,
@@ -269,6 +354,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   ),
                 ),
               ),
+              if (_geneticTimeline.isNotEmpty) _buildSolutionPanel(),
               GraphToolbar(
                 selectedTool: _selectedTool,
                 onSelectTool: (tool) {
@@ -308,6 +394,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
 
     setState(() {
       _edges = updatedEdges;
+      _clearSolutionInternal();
     });
 
     _showSnackBar('Peso actualizado');
@@ -328,4 +415,369 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     });
   }
 
+  Future<void> _runGeneticSolver() async {
+    final validationError = _validateForTsp();
+    if (validationError != null) {
+      _showSnackBar(validationError, error: true);
+      return;
+    }
+
+    final adjacency = _buildAdjacencyMap();
+
+    setState(() {
+      _isSolving = true;
+      _clearSolutionInternal();
+    });
+
+    try {
+      final solver = GeneticTspSolver(
+        adjacency: adjacency,
+        populationSize: 75,
+        generations: 120,
+        mutationRate: 0.18,
+        elitismCount: 2,
+        tournamentSize: 5,
+      );
+
+      final generations = await solver.solve();
+      if (!mounted) {
+        return;
+      }
+
+      if (generations.isEmpty) {
+        setState(() {
+          _isSolving = false;
+        });
+        _showSnackBar(
+          'No se pudo generar una solución. Ajusta el grafo e inténtalo de nuevo.',
+          error: true,
+        );
+        return;
+      }
+
+      setState(() {
+        _geneticTimeline = generations;
+        _currentGenerationIndex = 0;
+        _highlightedRoute = List<String>.from(generations.first.route);
+        _highlightVersion++;
+        _isSolving = false;
+      });
+
+      if (_geneticTimeline.length > 1) {
+        _startAutoPlay();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSolving = false;
+      });
+      _showSnackBar(
+        'Ocurrió un problema al ejecutar la solución: $error',
+        error: true,
+      );
+    }
+  }
+
+  void _startAutoPlay() {
+    if (_geneticTimeline.length <= 1) {
+      setState(() {
+        _isPlaying = false;
+      });
+      return;
+    }
+    if (_currentGenerationIndex >= _geneticTimeline.length - 1) {
+      setState(() {
+        _isPlaying = false;
+      });
+      _showSnackBar(
+        'Ya estás en la última generación. Distancia: ${_formatDistance(_geneticTimeline.last.bestDistance)}',
+      );
+      return;
+    }
+
+    _playbackTimer?.cancel();
+    setState(() {
+      _isPlaying = true;
+    });
+
+    _playbackTimer = Timer.periodic(_animationStep, (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      if (_currentGenerationIndex >= _geneticTimeline.length - 1) {
+        timer.cancel();
+        setState(() {
+          _isPlaying = false;
+        });
+        _showSnackBar(
+          'Ruta final encontrada: ${_formatDistance(_geneticTimeline.last.bestDistance)}',
+        );
+        return;
+      }
+
+      _goToStep(_currentGenerationIndex + 1, keepPlaying: true);
+
+      if (_currentGenerationIndex >= _geneticTimeline.length - 1) {
+        timer.cancel();
+        setState(() {
+          _isPlaying = false;
+        });
+        _showSnackBar(
+          'Ruta final encontrada: ${_formatDistance(_geneticTimeline.last.bestDistance)}',
+        );
+      }
+    });
+  }
+
+  void _pauseAutoPlay() {
+    if (_playbackTimer == null) {
+      setState(() {
+        _isPlaying = false;
+      });
+      return;
+    }
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+    setState(() {
+      _isPlaying = false;
+    });
+  }
+
+  void _goToStep(int index, {bool keepPlaying = false}) {
+    if (index < 0 || index >= _geneticTimeline.length) {
+      return;
+    }
+    if (!keepPlaying) {
+      _playbackTimer?.cancel();
+      _playbackTimer = null;
+    }
+    setState(() {
+      if (!keepPlaying) {
+        _isPlaying = false;
+      }
+      _currentGenerationIndex = index;
+      _highlightedRoute =
+          List<String>.from(_geneticTimeline[_currentGenerationIndex].route);
+      _highlightVersion++;
+    });
+  }
+
+  String? _validateForTsp() {
+    if (_nodes.length < 3) {
+      return 'Agrega al menos 3 nodos para resolver el viajero.';
+    }
+    if (_edges.isEmpty) {
+      return 'Conecta los nodos para construir un ciclo.';
+    }
+
+    final nodeIds = _nodes.map((node) => node.id).toList(growable: false);
+    final edgeLookup = <String, Set<String>>{};
+
+    for (final edge in _edges) {
+      edgeLookup.putIfAbsent(edge.from, () => <String>{}).add(edge.to);
+      edgeLookup.putIfAbsent(edge.to, () => <String>{}).add(edge.from);
+    }
+
+    for (var i = 0; i < nodeIds.length; i++) {
+      for (var j = i + 1; j < nodeIds.length; j++) {
+        final from = nodeIds[i];
+        final to = nodeIds[j];
+        final fromConnections = edgeLookup[from] ?? const {};
+        if (!fromConnections.contains(to)) {
+          final fromLabel =
+              _nodes.firstWhere((node) => node.id == from).label;
+          final toLabel = _nodes.firstWhere((node) => node.id == to).label;
+          return 'Falta la conexión entre $fromLabel y $toLabel.';
+        }
+      }
+    }
+
+    return null;
+  }
+
+  Map<String, Map<String, double>> _buildAdjacencyMap() {
+    final adjacency = <String, Map<String, double>>{
+      for (final node in _nodes) node.id: <String, double>{},
+    };
+
+    for (final edge in _edges) {
+      adjacency[edge.from]![edge.to] = edge.weight;
+      adjacency[edge.to]![edge.from] = edge.weight;
+    }
+
+    return adjacency;
+  }
+
+  Widget _buildSolutionPanel() {
+    if (_geneticTimeline.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final current = _geneticTimeline[_currentGenerationIndex];
+    final totalGenerations = _geneticTimeline.last.generation;
+    final progress = totalGenerations == 0
+        ? 1.0
+        : (current.generation / totalGenerations).clamp(0.0, 1.0);
+
+    final hasPrevious = _currentGenerationIndex > 0;
+    final hasNext = _currentGenerationIndex < _geneticTimeline.length - 1;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x11000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Solución genética',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: const Color(0xFF0F172A),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Generación ${current.generation} de $totalGenerations',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Generación anterior',
+                    onPressed: hasPrevious
+                        ? () => _goToStep(_currentGenerationIndex - 1)
+                        : null,
+                    icon: const Icon(Icons.skip_previous_rounded),
+                    color: const Color(0xFF0F172A),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: _isPlaying ? 'Pausar animación' : 'Reproducir animación',
+                    onPressed: _isPlaying ? _pauseAutoPlay : _startAutoPlay,
+                    icon: Icon(
+                      _isPlaying
+                          ? Icons.pause_circle_filled_rounded
+                          : Icons.play_circle_fill_rounded,
+                    ),
+                    iconSize: 34,
+                    color: const Color(0xFF22C55E),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Siguiente generación',
+                    onPressed:
+                        hasNext ? () => _goToStep(_currentGenerationIndex + 1) : null,
+                    icon: const Icon(Icons.skip_next_rounded),
+                    color: const Color(0xFF0F172A),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 6,
+              backgroundColor: const Color(0xFFE2E8F0),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Color(0xFF22C55E),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _MetricChip(
+                  label: 'Mejor distancia',
+                  value: '${_formatDistance(current.bestDistance)}',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _MetricChip(
+                  label: 'Promedio',
+                  value: _formatDistance(current.averageDistance),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: const Color(0xFF64748B),
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -1,3 +1,6 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/graph_models.dart';
@@ -10,6 +13,8 @@ class GraphCanvas extends StatefulWidget {
     required this.selectedTool,
     required this.selectedNodeId,
     required this.connectingFrom,
+    required this.highlightedRoute,
+    required this.highlightVersion,
     required this.onAddNode,
     required this.onMoveNode,
     required this.onDeleteNode,
@@ -27,6 +32,8 @@ class GraphCanvas extends StatefulWidget {
   final Tool selectedTool;
   final String? selectedNodeId;
   final String? connectingFrom;
+  final List<String>? highlightedRoute;
+  final int highlightVersion;
 
   final void Function(Offset position) onAddNode;
   final void Function(String id, Offset position) onMoveNode;
@@ -43,7 +50,8 @@ class GraphCanvas extends StatefulWidget {
   State<GraphCanvas> createState() => _GraphCanvasState();
 }
 
-class _GraphCanvasState extends State<GraphCanvas> {
+class _GraphCanvasState extends State<GraphCanvas>
+    with SingleTickerProviderStateMixin {
   static const double _nodeRadius = 28;
   static const double _selectionRadius = 36;
 
@@ -52,12 +60,26 @@ class _GraphCanvasState extends State<GraphCanvas> {
   String? _draggingEdgeId;
   Offset? _edgeDragStart;
   bool _edgeDragMoved = false;
+  late final AnimationController _highlightController;
 
   GraphNode? _nodeById(String id) {
     for (final node in widget.nodes) {
       if (node.id == id) return node;
     }
     return null;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _highlightController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+    if (widget.highlightedRoute != null &&
+        widget.highlightedRoute!.length >= 2) {
+      _highlightController.value = 1;
+    }
   }
 
   @override
@@ -77,6 +99,26 @@ class _GraphCanvasState extends State<GraphCanvas> {
       _edgeDragStart = null;
       _edgeDragMoved = false;
     }
+
+    final routeChanged = !listEquals(
+      widget.highlightedRoute,
+      oldWidget.highlightedRoute,
+    );
+    final versionChanged = widget.highlightVersion != oldWidget.highlightVersion;
+    if (routeChanged || versionChanged) {
+      if (widget.highlightedRoute == null ||
+          widget.highlightedRoute!.length < 2) {
+        _highlightController.reverse();
+      } else {
+        _highlightController.forward(from: 0);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _highlightController.dispose();
+    super.dispose();
   }
 
   void _handlePointer(PointerEvent event, Size size) {
@@ -518,6 +560,8 @@ class _GraphCanvasState extends State<GraphCanvas> {
                         selectedTool: widget.selectedTool,
                         connectingFrom: widget.connectingFrom,
                         pointerPosition: _pointerPosition,
+                        highlightedRoute: widget.highlightedRoute,
+                        highlightAnimation: _highlightController,
                       ),
                     ),
                   ),
@@ -565,18 +609,23 @@ class _GraphPainter extends CustomPainter {
     required this.selectedTool,
     required this.connectingFrom,
     required this.pointerPosition,
-  });
+    required this.highlightedRoute,
+    required this.highlightAnimation,
+  }) : super(repaint: highlightAnimation);
 
   final List<GraphNode> nodes;
   final List<GraphEdge> edges;
   final Tool selectedTool;
   final String? connectingFrom;
   final Offset? pointerPosition;
+  final List<String>? highlightedRoute;
+  final Animation<double>? highlightAnimation;
 
   @override
   void paint(Canvas canvas, Size size) {
     _drawGrid(canvas, size);
     _drawEdges(canvas);
+    _drawHighlightedRoute(canvas);
     _drawTempEdge(canvas);
   }
 
@@ -683,6 +732,136 @@ class _GraphPainter extends CustomPainter {
     }
   }
 
+  void _drawHighlightedRoute(Canvas canvas) {
+    if (highlightedRoute == null || highlightedRoute!.length < 2) {
+      return;
+    }
+
+    final progress = highlightAnimation?.value ?? 0;
+    if (progress <= 0) return;
+
+    final eased = Curves.easeOutCubic.transform(progress.clamp(0, 1));
+    final nodeMap = {for (final node in nodes) node.id: node};
+    final baseColor = const Color(0xFF22C55E);
+
+    final glowPaint = Paint()
+      ..color = baseColor.withOpacity(0.22 * eased)
+      ..strokeWidth = ui.lerpDouble(6, 12, eased)!
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
+
+    final strokePaint = Paint()
+      ..color = baseColor.withOpacity(0.85 * eased)
+      ..strokeWidth = ui.lerpDouble(3.5, 6, eased)!
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    for (var i = 0; i < highlightedRoute!.length - 1; i++) {
+      final fromId = highlightedRoute![i];
+      final toId = highlightedRoute![i + 1];
+      final fromNode = nodeMap[fromId];
+      final toNode = nodeMap[toId];
+      if (fromNode == null || toNode == null) continue;
+
+      final edge = _findEdge(fromId, toId);
+      final start = Offset(fromNode.x, fromNode.y);
+      final end = Offset(toNode.x, toNode.y);
+      final path = Path()..moveTo(start.dx, start.dy);
+
+      if (edge != null && edge.controlX != null && edge.controlY != null) {
+        final control = Offset(edge.controlX!, edge.controlY!);
+        path.quadraticBezierTo(control.dx, control.dy, end.dx, end.dy);
+      } else {
+        path.lineTo(end.dx, end.dy);
+      }
+
+      canvas.drawPath(path, glowPaint);
+      canvas.drawPath(path, strokePaint);
+    }
+
+    final highlightNodes = highlightedRoute!.toSet();
+    final nodeGlowPaint = Paint()
+      ..color = baseColor.withOpacity(0.18 * eased)
+      ..style = PaintingStyle.fill;
+    final nodeStrokePaint = Paint()
+      ..color = baseColor.withOpacity(0.9 * eased)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    for (final nodeId in highlightNodes) {
+      final node = nodeMap[nodeId];
+      if (node == null) continue;
+      final center = Offset(node.x, node.y);
+      canvas.drawCircle(center, ui.lerpDouble(12, 16, eased)!, nodeGlowPaint);
+      canvas.drawCircle(center, ui.lerpDouble(7, 9, eased)!, nodeStrokePaint);
+    }
+
+    if (highlightedRoute!.isNotEmpty) {
+      final startNode = nodeMap[highlightedRoute!.first];
+      if (startNode != null) {
+        final center = Offset(startNode.x, startNode.y);
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: 'INICIO',
+            style: TextStyle(
+              color: baseColor.withOpacity(0.95 * eased),
+              fontWeight: FontWeight.w700,
+              fontSize: 10,
+              letterSpacing: 0.6,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        final labelSize = Size(textPainter.width + 14, textPainter.height + 6);
+        final rect = RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: center.translate(0, -24),
+            width: labelSize.width,
+            height: labelSize.height,
+          ),
+          const Radius.circular(12),
+        );
+
+        final backgroundPaint = Paint()
+          ..color = Colors.white.withOpacity(0.92 * eased);
+        canvas.drawRRect(rect, backgroundPaint);
+        canvas.drawRRect(
+          rect,
+          Paint()
+            ..color = baseColor.withOpacity(0.5 * eased)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+
+        textPainter.paint(
+          canvas,
+          Offset(
+            rect.center.dx - textPainter.width / 2,
+            rect.center.dy - textPainter.height / 2,
+          ),
+        );
+        canvas.drawCircle(
+          center,
+          ui.lerpDouble(4, 6, eased)!,
+          Paint()..color = baseColor.withOpacity(0.95 * eased),
+        );
+      }
+    }
+  }
+
+  GraphEdge? _findEdge(String from, String to) {
+    for (final edge in edges) {
+      final matchesDirect = edge.from == from && edge.to == to;
+      final matchesInverse = edge.from == to && edge.to == from;
+      if (matchesDirect || matchesInverse) {
+        return edge;
+      }
+    }
+    return null;
+  }
+
   String _formatWeight(double weight) {
     final fixed = weight.toStringAsFixed(2);
     return fixed.contains('.')
@@ -758,7 +937,8 @@ class _GraphPainter extends CustomPainter {
         oldDelegate.edges != edges ||
         oldDelegate.selectedTool != selectedTool ||
         oldDelegate.connectingFrom != connectingFrom ||
-        oldDelegate.pointerPosition != pointerPosition;
+        oldDelegate.pointerPosition != pointerPosition ||
+        !listEquals(oldDelegate.highlightedRoute, highlightedRoute);
   }
 
   Offset _quadraticPoint(Offset p0, Offset p1, Offset p2, double t) {
