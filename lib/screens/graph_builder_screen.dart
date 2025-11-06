@@ -495,8 +495,18 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
         _isSolving = false;
         _isViewingSolution = false;
       });
+      final String errorMessage;
+      if (error is StateError) {
+        final message = error.message;
+        errorMessage = message.isNotEmpty
+            ? message
+            : 'No se pudo generar una solución válida con las conexiones actuales.';
+      } else {
+        errorMessage =
+            'Ocurrió un problema al ejecutar la solución: $error';
+      }
       _showSnackBar(
-        'Ocurrió un problema al ejecutar la solución: $error',
+        errorMessage,
         error: true,
       );
     }

@@ -74,10 +74,8 @@ class GeneticTspSolver {
       throw StateError('At least 3 nodes are required to solve the TSP.');
     }
 
-    final startNode = nodes.first;
-    final remainingNodes = nodes.sublist(1);
-    final population = _initialPopulation(remainingNodes, startNode);
-    var evaluations = _evaluatePopulation(population, startNode);
+    final population = _initialPopulation(nodes);
+    var evaluations = _evaluatePopulation(population);
     if (evaluations.isEmpty) {
       throw StateError(
         'Las conexiones actuales no permiten construir un ciclo que visite todos los nodos.',
@@ -85,30 +83,27 @@ class GeneticTspSolver {
     }
 
     final generationsLog = <GeneticTspGeneration>[
-      _logGeneration(0, evaluations, startNode),
+      _logGeneration(0, evaluations),
     ];
 
     var currentPopulation = population;
 
     for (var generation = 1; generation <= generations; generation++) {
-      currentPopulation = _nextGeneration(evaluations, startNode);
-      evaluations = _evaluatePopulation(currentPopulation, startNode);
+      currentPopulation = _nextGeneration(evaluations);
+      evaluations = _evaluatePopulation(currentPopulation);
       if (evaluations.isEmpty) {
         throw StateError(
           'Las conexiones actuales no permiten construir un ciclo que visite todos los nodos.',
         );
       }
-      generationsLog.add(_logGeneration(generation, evaluations, startNode));
+      generationsLog.add(_logGeneration(generation, evaluations));
     }
 
     return generationsLog;
   }
 
-  List<List<String>> _initialPopulation(
-    List<String> remainingNodes,
-    String startNode,
-  ) {
-    if (remainingNodes.isEmpty) {
+  List<List<String>> _initialPopulation(List<String> nodes) {
+    if (nodes.isEmpty) {
       return List.generate(populationSize, (_) => <String>[]);
     }
 
@@ -118,9 +113,9 @@ class GeneticTspSolver {
 
     while (population.length < populationSize && attempts < attemptsLimit) {
       attempts++;
-      final genome = List<String>.from(remainingNodes);
+      final genome = List<String>.from(nodes);
       genome.shuffle(_random);
-      if (_isValidGenome(startNode, genome)) {
+      if (_isValidGenome(genome)) {
         population.add(genome);
       }
     }
@@ -143,11 +138,10 @@ class GeneticTspSolver {
 
   List<_ChromosomeEvaluation> _evaluatePopulation(
     List<List<String>> population,
-    String startNode,
   ) {
     final evaluations = <_ChromosomeEvaluation>[];
     for (final genome in population) {
-      final distance = _routeDistance(startNode, genome);
+      final distance = _routeDistance(genome);
       if (!distance.isFinite) {
         continue;
       }
@@ -162,7 +156,6 @@ class GeneticTspSolver {
 
   List<List<String>> _nextGeneration(
     List<_ChromosomeEvaluation> evaluations,
-    String startNode,
   ) {
     if (evaluations.isEmpty) {
       return const <List<String>>[];
@@ -178,14 +171,23 @@ class GeneticTspSolver {
       final parent1 = _tournamentSelect(evaluations).genome;
       final parent2 = _tournamentSelect(evaluations).genome;
       var child = _orderedCrossover(parent1, parent2);
-      if (_random.nextDouble() < mutationRate && child.length >= 2) {
-        child = _swapMutation(child);
+
+      if (_random.nextDouble() < mutationRate) {
+        child = _inversionMutation(child);
       }
-      if (!_isValidGenome(startNode, child)) {
+
+      // Apply 2-opt local search to the child
+      final improvedChild = _twoOptImprove(child);
+      if (_isValidGenome(improvedChild)) {
+        child = improvedChild;
+      }
+
+      if (!_isValidGenome(child)) {
         child = List<String>.from(
           evaluations[_random.nextInt(evaluations.length)].genome,
         );
       }
+
       nextPopulation.add(child);
     }
 
@@ -195,7 +197,6 @@ class GeneticTspSolver {
   GeneticTspGeneration _logGeneration(
     int generation,
     List<_ChromosomeEvaluation> evaluations,
-    String startNode,
   ) {
     final best = evaluations.first;
     final average =
@@ -204,7 +205,7 @@ class GeneticTspSolver {
 
     return GeneticTspGeneration(
       generation: generation,
-      route: _buildRoute(startNode, best.genome),
+      route: _buildRoute(best.genome),
       bestDistance: best.distance,
       averageDistance: average,
     );
@@ -227,56 +228,84 @@ class GeneticTspSolver {
     if (parent1.isEmpty || parent2.isEmpty) {
       return List<String>.from(parent1);
     }
-
     final length = parent1.length;
-    final start = _random.nextInt(length);
-    final end = start + 1 + _random.nextInt(length - start);
+    if (length < 2) {
+      return List<String>.from(parent1);
+    }
 
+    int start, end;
+    start = _random.nextInt(length);
+    end = _random.nextInt(length);
+    while (end == start) {
+      end = _random.nextInt(length);
+    }
+
+    if (start > end) {
+      final temp = start;
+      start = end;
+      end = temp;
+    }
+
+    final segment = parent1.sublist(start, end);
     final child = List<String?>.filled(length, null);
-    final segment = <String>{};
+    final segmentSet = Set<String>.from(segment);
 
-    for (var i = start; i < end; i++) {
-      child[i] = parent1[i];
-      segment.add(parent1[i]);
+    for (var i = 0; i < segment.length; i++) {
+      child[start + i] = segment[i];
     }
 
-    var parent2Index = 0;
+    var childIndex = 0;
     for (var i = 0; i < length; i++) {
-      if (child[i] != null) continue;
-
-      while (segment.contains(parent2[parent2Index])) {
-        parent2Index = (parent2Index + 1) % length;
+      final gene = parent2[i];
+      if (!segmentSet.contains(gene)) {
+        while (child[childIndex] != null) {
+          childIndex++;
+        }
+        child[childIndex] = gene;
       }
-
-      child[i] = parent2[parent2Index];
-      parent2Index = (parent2Index + 1) % length;
     }
 
-    return List<String>.generate(length, (index) => child[index]!);
+    return child.cast<String>().toList();
   }
 
-  List<String> _swapMutation(List<String> genome) {
-    final mutated = List<String>.from(genome);
-    final indexA = _random.nextInt(mutated.length);
-    var indexB = _random.nextInt(mutated.length);
-    while (indexB == indexA) {
-      indexB = _random.nextInt(mutated.length);
+  List<String> _inversionMutation(List<String> genome) {
+    if (genome.length < 2) {
+      return genome;
     }
-    final temp = mutated[indexA];
-    mutated[indexA] = mutated[indexB];
-    mutated[indexB] = temp;
+    final mutated = List<String>.from(genome);
+    int start, end;
+    start = _random.nextInt(mutated.length);
+    end = _random.nextInt(mutated.length);
+    while (end == start) {
+      end = _random.nextInt(mutated.length);
+    }
+
+    if (start > end) {
+      final temp = start;
+      start = end;
+      end = temp;
+    }
+
+    final reversedSegment = mutated.sublist(start, end).reversed.toList();
+    mutated.replaceRange(start, end, reversedSegment);
     return mutated;
   }
 
-  List<String> _buildRoute(String startNode, List<String> genome) {
-    return [startNode, ...genome, startNode];
+  List<String> _buildRoute(List<String> genome) {
+    if (genome.isEmpty) {
+      return const [];
+    }
+    final canonical = _canonicalizeGenome(genome);
+    return [...canonical, canonical.first];
   }
 
-  bool _isValidGenome(String startNode, List<String> genome) {
-    final route = _buildRoute(startNode, genome);
-    for (var i = 0; i < route.length - 1; i++) {
-      final from = route[i];
-      final to = route[i + 1];
+  bool _isValidGenome(List<String> genome) {
+    if (genome.isEmpty) {
+      return false;
+    }
+    for (var i = 0; i < genome.length; i++) {
+      final from = genome[i];
+      final to = genome[(i + 1) % genome.length];
       final weight = adjacency[from]?[to];
       if (weight == null) {
         return false;
@@ -285,12 +314,14 @@ class GeneticTspSolver {
     return true;
   }
 
-  double _routeDistance(String startNode, List<String> genome) {
-    final route = _buildRoute(startNode, genome);
+  double _routeDistance(List<String> genome) {
+    if (genome.isEmpty) {
+      return double.infinity;
+    }
     var total = 0.0;
-    for (var i = 0; i < route.length - 1; i++) {
-      final from = route[i];
-      final to = route[i + 1];
+    for (var i = 0; i < genome.length; i++) {
+      final from = genome[i];
+      final to = genome[(i + 1) % genome.length];
       final weight = adjacency[from]?[to];
       if (weight == null) {
         return double.infinity;
@@ -298,6 +329,104 @@ class GeneticTspSolver {
       total += weight;
     }
     return total;
+  }
+
+  List<String> _canonicalizeGenome(List<String> genome) {
+    if (genome.isEmpty) {
+      return genome;
+    }
+    final minNode = genome.reduce(
+      (value, element) =>
+          value.compareTo(element) <= 0 ? value : element,
+    );
+    final firstRotation = _rotateToFront(genome, genome.indexOf(minNode));
+    final reversedGenome = List<String>.from(genome.reversed);
+    final reversedIndex = reversedGenome.indexOf(minNode);
+    final reversedRotation = _rotateToFront(reversedGenome, reversedIndex);
+
+    final firstKey = firstRotation.join('\u0000');
+    final secondKey = reversedRotation.join('\u0000');
+
+    return firstKey.compareTo(secondKey) <= 0 ? firstRotation : reversedRotation;
+  }
+
+  List<String> _rotateToFront(List<String> genome, int index) {
+    if (genome.isEmpty) {
+      return const [];
+    }
+    final normalizedIndex = index <= 0
+        ? 0
+        : index >= genome.length
+            ? genome.length - 1
+            : index;
+    if (normalizedIndex <= 0) {
+      return List<String>.from(genome);
+    }
+    return [
+      ...genome.sublist(normalizedIndex),
+      ...genome.sublist(0, normalizedIndex),
+    ];
+  }
+
+  // Lightweight 2-opt refinement that only swaps when the new edges exist.
+  List<String> _twoOptImprove(List<String> genome) {
+    if (genome.length < 4) {
+      return List<String>.from(genome);
+    }
+
+    var candidate = List<String>.from(genome);
+    var improved = true;
+
+    while (improved) {
+      improved = false;
+
+      for (var i = 0; i < candidate.length - 1; i++) {
+        final a = candidate[i];
+        final b = candidate[(i + 1) % candidate.length];
+        final ab = adjacency[a]?[b];
+        if (ab == null) {
+          continue;
+        }
+
+        for (var j = i + 2; j < candidate.length; j++) {
+          if (i == 0 && j == candidate.length - 1) {
+            continue;
+          }
+          final c = candidate[j];
+          final d = candidate[(j + 1) % candidate.length];
+          final cd = adjacency[c]?[d];
+          if (cd == null) {
+            continue;
+          }
+
+          final ac = adjacency[a]?[c];
+          final bd = adjacency[b]?[d];
+          if (ac == null || bd == null) {
+            continue;
+          }
+
+          final currentDistance = ab + cd;
+          final swappedDistance = ac + bd;
+          if (swappedDistance + 1e-9 < currentDistance) {
+            final reversedSegment =
+                candidate.sublist(i + 1, j + 1).reversed.toList();
+            candidate = [
+              ...candidate.sublist(0, i + 1),
+              ...reversedSegment,
+              ...candidate.sublist(j + 1),
+            ];
+            improved = true;
+            break;
+          }
+        }
+
+        if (improved) {
+          break;
+        }
+      }
+    }
+
+    return candidate;
   }
 
   static Map<String, Map<String, double>> _normalizeAdjacency(
