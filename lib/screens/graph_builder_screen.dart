@@ -42,7 +42,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(message),
-          backgroundColor: error ? const Color(0xFFE11D48) : const Color(0xFF1E293B),
+          backgroundColor: error
+              ? const Color(0xFFE11D48)
+              : const Color(0xFF1E293B),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -109,8 +111,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
   }
 
   void _deleteNode(String id) {
-    final updatedNodes =
-        _nodes.where((node) => node.id != id).toList(growable: false);
+    final updatedNodes = _nodes
+        .where((node) => node.id != id)
+        .toList(growable: false);
     final updatedEdges = _edges
         .where((edge) => edge.from != id && edge.to != id)
         .toList(growable: false);
@@ -132,8 +135,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
 
   void _deleteEdge(String id) {
     if (_edges.any((edge) => edge.id == id)) {
-      final updatedEdges =
-          _edges.where((edge) => edge.id != id).toList(growable: false);
+      final updatedEdges = _edges
+          .where((edge) => edge.id != id)
+          .toList(growable: false);
       setState(() {
         _edges = updatedEdges;
         _clearSolutionInternal();
@@ -178,8 +182,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     }
 
     final newEdge = GraphEdge(
-      id:
-          'edge-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999)}',
+      id: 'edge-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(999)}',
       from: from,
       to: to,
       weight: 1.0,
@@ -241,8 +244,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
     final nodeCount = _nodes.length;
     final edgeCount = _edges.length;
     final bool hasSolution = _geneticTimeline.isNotEmpty;
-    final GeneticTspGeneration? currentGeneration =
-        hasSolution ? _geneticTimeline[_currentGenerationIndex] : null;
+    final GeneticTspGeneration? currentGeneration = hasSolution
+        ? _geneticTimeline[_currentGenerationIndex]
+        : null;
 
     return Scaffold(
       body: Container(
@@ -257,8 +261,14 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
           child: Column(
             children: [
               Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.9),
                   borderRadius: BorderRadius.circular(20),
@@ -278,7 +288,8 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                         children: [
                           Text(
                             'Graph Builder',
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
                                   color: const Color(0xFF0F172A),
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -286,9 +297,8 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                           const SizedBox(height: 4),
                           Text(
                             '$nodeCount nodos • $edgeCount conexiones',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: const Color(0xFF64748B),
-                                ),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: const Color(0xFF64748B)),
                           ),
                           if (currentGeneration != null)
                             AnimatedSwitcher(
@@ -296,7 +306,8 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                               child: Text(
                                 'Mejor actual: ${_formatDistance(currentGeneration.bestDistance)}',
                                 key: ValueKey<int>(_highlightVersion),
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
                                       color: const Color(0xFF22C55E),
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -322,7 +333,10 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2.2,
-                                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
                                 ),
                               )
                             : const Icon(Icons.alt_route_rounded),
@@ -330,8 +344,8 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                           _isSolving
                               ? 'Resolviendo...'
                               : hasSolution
-                                  ? 'Recalcular ruta'
-                                  : 'Resolver TSP',
+                              ? 'Recalcular ruta'
+                              : 'Resolver TSP',
                         ),
                       ),
                     ),
@@ -502,13 +516,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
             ? message
             : 'No se pudo generar una solución válida con las conexiones actuales.';
       } else {
-        errorMessage =
-            'Ocurrió un problema al ejecutar la solución: $error';
+        errorMessage = 'Ocurrió un problema al ejecutar la solución: $error';
       }
-      _showSnackBar(
-        errorMessage,
-        error: true,
-      );
+      _showSnackBar(errorMessage, error: true);
     }
   }
 
@@ -592,8 +602,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
         _isPlaying = false;
       }
       _currentGenerationIndex = index;
-      _highlightedRoute =
-          List<String>.from(_geneticTimeline[_currentGenerationIndex].route);
+      _highlightedRoute = List<String>.from(
+        _geneticTimeline[_currentGenerationIndex].route,
+      );
       _highlightVersion++;
     });
   }
@@ -669,13 +680,16 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
   Widget _buildSolutionPanel() {
     final theme = Theme.of(context);
     final hasSolution = _geneticTimeline.isNotEmpty;
-    final GeneticTspGeneration? current =
-        hasSolution ? _geneticTimeline[_currentGenerationIndex] : null;
-    final int totalGenerations = hasSolution ? _geneticTimeline.last.generation : 0;
+    final GeneticTspGeneration? current = hasSolution
+        ? _geneticTimeline[_currentGenerationIndex]
+        : null;
+    final int totalGenerations = hasSolution
+        ? _geneticTimeline.last.generation
+        : 0;
     final double? progressValue = hasSolution
         ? (totalGenerations == 0
-            ? 1.0
-            : (current!.generation / totalGenerations).clamp(0.0, 1.0))
+              ? 1.0
+              : (current!.generation / totalGenerations).clamp(0.0, 1.0))
         : null;
 
     final hasPrevious = hasSolution && _currentGenerationIndex > 0;
@@ -735,7 +749,10 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   OutlinedButton.icon(
                     onPressed: _returnToEditingMode,
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
                       ),
@@ -758,9 +775,12 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                         ),
                         const SizedBox(width: 4),
                         IconButton(
-                          tooltip:
-                              _isPlaying ? 'Pausar animación' : 'Reproducir animación',
-                          onPressed: _isPlaying ? _pauseAutoPlay : _startAutoPlay,
+                          tooltip: _isPlaying
+                              ? 'Pausar animación'
+                              : 'Reproducir animación',
+                          onPressed: _isPlaying
+                              ? _pauseAutoPlay
+                              : _startAutoPlay,
                           icon: Icon(
                             _isPlaying
                                 ? Icons.pause_circle_filled_rounded
@@ -806,7 +826,9 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.2,
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF22C55E)),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Color(0xFF22C55E),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -836,7 +858,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                 Expanded(
                   child: _MetricChip(
                     label: 'Promedio',
-                    value: _formatDistance(current!.averageDistance),
+                    value: _formatDistance(current.averageDistance),
                   ),
                 ),
               ],
@@ -849,10 +871,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
 }
 
 class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.label,
-    required this.value,
-  });
+  const _MetricChip({required this.label, required this.value});
 
   final String label;
   final String value;
