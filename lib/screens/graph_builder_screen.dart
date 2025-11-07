@@ -287,7 +287,7 @@ class _GraphBuilderScreenState extends State<GraphBuilderScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Graph Builder',
+                            'Grafos',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
                                   color: const Color(0xFF0F172A),

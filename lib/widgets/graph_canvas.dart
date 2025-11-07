@@ -249,42 +249,7 @@ class _GraphCanvasState extends State<GraphCanvas>
     _pendingEdgeTapId = null;
   }
 
-  void _handlePanEnd({required bool allowEdit}) {
-    if (_draggingEdgeId != null) {
-      final edgeId = _draggingEdgeId!;
-      final edge = widget.edges.firstWhere(
-        (e) => e.id == edgeId,
-        orElse: () => const GraphEdge(
-          id: '',
-          from: '',
-          to: '',
-          weight: 0,
-        ),
-      );
-
-      if (allowEdit &&
-          !_edgeDragMoved &&
-          widget.selectedTool == Tool.select &&
-          edge.id.isNotEmpty) {
-        widget.onEditEdge(edge);
-      }
-    } else if (allowEdit &&
-        _pendingEdgeTapId != null &&
-        widget.selectedTool == Tool.select) {
-      final edge = widget.edges.firstWhere(
-        (e) => e.id == _pendingEdgeTapId,
-        orElse: () => const GraphEdge(
-          id: '',
-          from: '',
-          to: '',
-          weight: 0,
-        ),
-      );
-      if (edge.id.isNotEmpty) {
-        widget.onEditEdge(edge);
-      }
-    }
-
+  void _handlePanEnd() {
     _draggingEdgeId = null;
     _edgeDragStart = null;
     _edgeDragMoved = false;
@@ -292,7 +257,10 @@ class _GraphCanvasState extends State<GraphCanvas>
   }
 
   GraphEdge? _edgeHitTest(Offset point) {
-    const double threshold = 24;
+    const double baseThreshold = 26;
+
+    GraphEdge? closestEdge;
+    double closestDistance = double.infinity;
 
     for (final edge in widget.edges) {
       final fromNode = _nodeById(edge.from);
@@ -314,13 +282,23 @@ class _GraphCanvasState extends State<GraphCanvas>
           points[i],
           points[i + 1],
         );
-        if (distance <= threshold) {
-          return edge;
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestEdge = edge;
         }
       }
     }
 
-    return null;
+    if (closestEdge == null) {
+      return null;
+    }
+
+    final bool isCurved =
+        closestEdge.controlX != null && closestEdge.controlY != null;
+    final double effectiveThreshold =
+        isCurved ? baseThreshold : baseThreshold * 0.75;
+
+    return closestDistance <= effectiveThreshold ? closestEdge : null;
   }
 
   List<Offset> _edgeSamplePoints(
@@ -547,8 +525,8 @@ class _GraphCanvasState extends State<GraphCanvas>
             onTapUp: (_) => _handleTapUp(),
             onPanStart: (details) => _handlePanStart(details, size),
             onPanUpdate: (details) => _handlePanUpdate(details, size),
-            onPanEnd: (_) => _handlePanEnd(allowEdit: true),
-            onPanCancel: () => _handlePanEnd(allowEdit: false),
+            onPanEnd: (_) => _handlePanEnd(),
+            onPanCancel: () => _handlePanEnd(),
             child: SizedBox.expand(
               child: Stack(
                 children: [
